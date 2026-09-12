@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tableau articles</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<style>
+  :root{
+    --noir:#0b0b0b;
+    --bleu:#2bb8d9;
+    --vert:#12c47c;
+    --orange:#e8a020;
+    --rouge:#e0483c;
+    --trait:3px solid #000;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    padding:18px 14px 60px;
+    background:#eef3f7;
+    font-family:"Helvetica Neue",Arial,sans-serif;
+    color:#111;
+  }
+  .app{max-width:820px;margin:0 auto;}
+
+  /* barre d'actions */
+  .actions{
+    display:flex;flex-wrap:wrap;gap:8px;
+    margin:0 0 14px;
+  }
+  button{
+    font:600 13px/1 "Helvetica Neue",Arial,sans-serif;
+    padding:10px 14px;
+    border:2px solid #000;
+    background:#fff;
+    color:#000;
+    cursor:pointer;
+  }
+  button:hover{background:#000;color:#fff;}
+  button:focus-visible{outline:3px solid var(--bleu);outline-offset:2px;}
+  button.plein{background:#000;color:#fff;}
+  button.plein:hover{background:#333;}
+
+  /* tableau */
+  .sheet{background:#fff;padding:10px;}
+  table{border-collapse:collapse;width:100%;table-layout:fixed;}
+  th,td{border:var(--trait);padding:0;vertical-align:middle;text-align:center;}
+  thead th{
+    background:var(--noir);color:#fff;
+    font-size:12px;font-weight:800;letter-spacing:.4px;
+    padding:16px 8px;line-height:1.25;
+  }
+  col.photo{width:38%;}
+  col.prix{width:20%;}
+  col.val{width:22%;}
+
+  td.c-photo{position:relative;padding:8px;}
+  .drop{
+    height:120px;width:100%;
+    border:2px dashed #cfd8dd;
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;overflow:hidden;background:#fafcfd;
+  }
+  .drop:hover{border-color:var(--bleu);}
+  .drop:focus-visible{outline:3px solid var(--bleu);outline-offset:2px;}
+  .drop.pleine{border:none;background:#fff;}
+  .drop img{max-width:100%;max-height:120px;object-fit:contain;display:block;}
+  .drop span{font-size:12px;color:#9aa7ae;padding:0 10px;}
+
+  .legende{
+    margin-top:6px;font-size:14px;font-weight:700;font-style:italic;
+    color:var(--bleu);text-decoration:underline;min-height:19px;outline:none;
+  }
+  td.c-prix{font-size:20px;font-weight:700;padding:10px 6px;outline:none;}
+  td.c-val{font-size:19px;font-weight:800;color:var(--vert);padding:10px 6px;outline:none;}
+  td.c-val.moyen{color:var(--orange);}
+  td.c-val.non{color:var(--rouge);}
+
+  [contenteditable]:empty::before{content:attr(data-ph);color:#c3ced4;font-weight:400;font-style:normal;}
+  td.c-prix:focus,.legende:focus{background:#eefaff;}
+
+  /* outils de ligne */
+  .tools{
+    position:absolute;top:2px;right:2px;display:flex;gap:2px;
+    opacity:0;transition:opacity .12s;
+  }
+  tr:hover .tools,.tools:focus-within{opacity:1;}
+  .tools button{
+    width:24px;height:24px;padding:0;font-size:13px;line-height:1;
+    border:1px solid #000;background:#fff;
+  }
+  @media (hover:none){.tools{opacity:.55;}}
+
+  .note{margin:14px 2px 0;font-size:13px;color:#5d6b73;line-height:1.55;}
+  .note b{color:#111;}
+
+  /* pendant l'export */
+  body.export .tools{display:none;}
+  body.export .drop{border:none;}
+  body.export [contenteditable]:empty::before{content:"";}
+  body.export .legende{min-height:0;}
+
+  @media (max-width:560px){
+    thead th{font-size:10px;padding:12px 4px;}
+    td.c-prix{font-size:15px;}
+    td.c-val{font-size:14px;}
+    .drop,.drop img{height:90px;max-height:90px;}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="actions">
+    <button id="add" class="plein">Ajouter une ligne</button>
+    <button id="png">Exporter en PNG</button>
+    <button id="clear">Tout effacer</button>
+  </div>
+
+  <div class="sheet" id="sheet">
+    <table>
+      <colgroup>
+        <col class="photo"><col class="prix"><col class="prix"><col class="val">
+      </colgroup>
+      <thead>
+        <tr>
+          <th contenteditable>ARTICLE</th>
+          <th contenteditable>PRIX</th>
+          <th contenteditable>PRIX COMPLET</th>
+          <th contenteditable>VALEUR D'ACHAT</th>
+        </tr>
+      </thead>
+      <tbody id="corps"></tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    Clique sur une case photo pour choisir une image, ou fais-la glisser dedans, ou colle-la avec <b>Ctrl+V</b>.
+    Tous les textes se modifient directement, titres de colonnes compris.
+    Écris <b>PARFAIT</b> / <b>BON</b> en vert, <b>MOYEN</b> / <b>CORRECT</b> en orange, <b>NON</b> / <b>MAUVAIS</b> en rouge.
+  </p>
+</div>
+
+<input type="file" id="fichier" accept="image/*" hidden>
+
+<script>
+const corps = document.getElementById('corps');
+const fichier = document.getElementById('fichier');
+let cibleDrop = null;      // case photo en cours de remplissage
+let derniereCase = null;   // pour le collage Ctrl+V
+
+/* ---------- création d'une ligne ---------- */
+function ligne(d = {}) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td class="c-photo">
+      <div class="drop" tabindex="0"><span>Photo de l'article</span></div>
+      <div class="legende" contenteditable data-ph="Nom (facultatif)"></div>
+      <div class="tools">
+        <button title="Monter" data-act="up">↑</button>
+        <button title="Descendre" data-act="down">↓</button>
+        <button title="Supprimer la ligne" data-act="del">✕</button>
+      </div>
+    </td>
+    <td class="c-prix" contenteditable data-ph="0.00€"></td>
+    <td class="c-prix" contenteditable data-ph="0.00€"></td>
+    <td class="c-val" contenteditable data-ph="PARFAIT"></td>`;
+
+  if (d.img) poserImage(tr.querySelector('.drop'), d.img);
+  tr.querySelector('.legende').textContent = d.legende || '';
+  const p = tr.querySelectorAll('.c-prix');
+  p[0].textContent = d.prix || '';
+  p[1].textContent = d.complet || '';
+  const v = tr.querySelector('.c-val');
+  v.textContent = d.valeur || '';
+  couleurValeur(v);
+
+  corps.appendChild(tr);
+  return tr;
+}
+
+function poserImage(drop, dataUrl) {
+  drop.innerHTML = '';
+  const img = new Image();
+  img.src = dataUrl;
+  drop.appendChild(img);
+  drop.classList.add('pleine');
+}
+
+function couleurValeur(td) {
+  const t = td.textContent.trim().toUpperCase();
+  td.classList.remove('moyen', 'non');
+  if (/NON|MAUVAIS|JAMAIS|FUIR/.test(t)) td.classList.add('non');
+  else if (/MOYEN|CORRECT|LIMITE|PEUT/.test(t)) td.classList.add('moyen');
+}
+
+/* ---------- images : redimension pour rester léger ---------- */
+function preparer(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type.startsWith('image/')) return reject();
+    const fr = new FileReader();
+    fr.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const max = 520;
+        const r = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * r);
+        c.height = Math.round(img.height * r);
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = reject;
+      img.src = fr.result;
+    };
+    fr.onerror = reject;
+    fr.readAsDataURL(file);
+  });
+}
+
+async function recevoir(drop, file) {
+  try {
+    const url = await preparer(file);
+    poserImage(drop, url);
+    sauver();
+  } catch (e) {
+    drop.innerHTML = '<span>Image illisible — réessaie avec un JPG ou un PNG</span>';
+  }
+}
+
+/* ---------- interactions ---------- */
+corps.addEventListener('click', e => {
+  const b = e.target.closest('.tools button');
+  if (b) {
+    const tr = b.closest('tr');
+    if (b.dataset.act === 'del') tr.remove();
+    if (b.dataset.act === 'up' && tr.previousElementSibling) tr.parentNode.insertBefore(tr, tr.previousElementSibling);
+    if (b.dataset.act === 'down' && tr.nextElementSibling) tr.parentNode.insertBefore(tr.nextElementSibling, tr);
+    sauver();
+    return;
+  }
+  const drop = e.target.closest('.drop');
+  if (drop) { cibleDrop = drop; fichier.click(); }
+});
+
+corps.addEventListener('keydown', e => {
+  if (e.target.classList.contains('drop') && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault(); cibleDrop = e.target; fichier.click();
+  }
+  if (e.key === 'Enter' && e.target.isContentEditable) { e.preventDefault(); e.target.blur(); }
+});
+
+corps.addEventListener('focusin', e => { derniereCase = e.target.closest('.c-photo')?.querySelector('.drop') || null; });
+corps.addEventListener('input', e => {
+  if (e.target.classList.contains('c-val')) couleurValeur(e.target);
+  sauver();
+});
+document.querySelectorAll('thead th').forEach(th => th.addEventListener('input', sauver));
+
+fichier.addEventListener('change', () => {
+  if (cibleDrop && fichier.files[0]) recevoir(cibleDrop, fichier.files[0]);
+  fichier.value = '';
+});
+
+['dragover', 'drop'].forEach(t => corps.addEventListener(t, e => {
+  const drop = e.target.closest('.drop');
+  if (!drop) return;
+  e.preventDefault();
+  if (t === 'drop') recevoir(drop, e.dataTransfer.files[0]);
+}));
+
+document.addEventListener('paste', e => {
+  const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+  if (!item) return;
+  const drop = derniereCase || corps.querySelector('.drop:not(.pleine)');
+  if (!drop) return;
+  e.preventDefault();
+  recevoir(drop, item.getAsFile());
+});
+
+document.getElementById('add').addEventListener('click', () => {
+  const tr = ligne();
+  tr.querySelector('.drop').scrollIntoView({ block: 'center', behavior: 'smooth' });
+  sauver();
+});
+
+document.getElementById('clear').addEventListener('click', () => {
+  if (!confirm('Effacer toutes les lignes du tableau ?')) return;
+  corps.innerHTML = '';
+  for (let i = 0; i < 6; i++) ligne();
+  sauver();
+});
+
+document.getElementById('png').addEventListener('click', async e => {
+  const btn = e.currentTarget, txt = btn.textContent;
+  if (typeof html2canvas !== 'function') { btn.textContent = 'Export indisponible hors ligne'; setTimeout(() => btn.textContent = txt, 2500); return; }
+  btn.textContent = 'Export en cours…';
+  document.body.classList.add('export');
+  try {
+    const c = await html2canvas(document.getElementById('sheet'), { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+    const a = document.createElement('a');
+    a.download = 'tableau-articles.png';
+    a.href = c.toDataURL('image/png');
+    a.click();
+    btn.textContent = 'Image enregistrée';
+  } catch (err) {
+    btn.textContent = 'Export impossible';
+  }
+  document.body.classList.remove('export');
+  setTimeout(() => btn.textContent = txt, 2000);
+});
+
+/* ---------- sauvegarde ---------- */
+let minuteur;
+function sauver() {
+  clearTimeout(minuteur);
+  minuteur = setTimeout(async () => {
+    if (!window.storage) return;
+    const data = {
+      entetes: [...document.querySelectorAll('thead th')].map(th => th.textContent),
+      lignes: [...corps.children].map(tr => ({
+        img: tr.querySelector('.drop img')?.src || '',
+        legende: tr.querySelector('.legende').textContent,
+        prix: tr.querySelectorAll('.c-prix')[0].textContent,
+        complet: tr.querySelectorAll('.c-prix')[1].textContent,
+        valeur: tr.querySelector('.c-val').textContent
+      }))
+    };
+    try { await window.storage.set('tableau-articles', JSON.stringify(data)); } catch (e) {}
+  }, 500);
+}
+
+async function charger() {
+  let data = null;
+  if (window.storage) {
+    try { const r = await window.storage.get('tableau-articles'); data = r ? JSON.parse(r.value) : null; } catch (e) {}
+  }
+  if (data?.lignes?.length) {
+    const th = document.querySelectorAll('thead th');
+    (data.entetes || []).forEach((t, i) => { if (th[i]) th[i].textContent = t; });
+    data.lignes.forEach(ligne);
+  } else {
+    for (let i = 0; i < 6; i++) ligne();
+  }
+}
+charger();
+</script>
+</body>
+</html>
