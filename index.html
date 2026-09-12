@@ -164,8 +164,8 @@
    CONFIGURATION — à remplir pour le partage entre visiteurs
    Supabase > Project Settings > API
    ============================================================ */
-const SUPABASE_URL = "";   // ex : https://abcdefgh.supabase.co
-const SUPABASE_KEY = "";   // la clé "anon public"
+const SUPABASE_URL = "https://hmdcudnlrlbdzqwbqzep.supabase.co";
+const SUPABASE_KEY = "sb_publishable_TOKm-j_uHgmn9aD8s6btRg_y8SGtvdW";
 const BUCKET = "photos";
 /* ========================================================== */
 
@@ -189,12 +189,20 @@ function message(txt, alerte) {
 }
 
 /* ---------- accès aux données ---------- */
+/* Les clés sb_publishable_… ne sont pas des JWT : elles passent uniquement par
+   l'en-tête apikey, sinon PostgREST répond « Invalid JWT ». Les anciennes clés
+   anon (eyJ…) gardent l'en-tête Authorization. */
+function entetesAuth() {
+  const h = { apikey: SUPABASE_KEY };
+  if (!SUPABASE_KEY.startsWith('sb_')) h.Authorization = 'Bearer ' + SUPABASE_KEY;
+  return h;
+}
+
 async function api(chemin, opts = {}) {
   const r = await fetch(SUPABASE_URL + '/rest/v1/' + chemin, {
     ...opts,
     headers: {
-      apikey: SUPABASE_KEY,
-      Authorization: 'Bearer ' + SUPABASE_KEY,
+      ...entetesAuth(),
       'Content-Type': 'application/json',
       Prefer: 'return=representation',
       ...(opts.headers || {})
@@ -217,11 +225,20 @@ const store = enLigne ? {
   async remove(id) { await api('cotes?id=eq.' + id, { method: 'DELETE' }); },
   async upload(blob) {
     const nom = Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.jpg';
-    const r = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${nom}`, {
+    const cible = `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${nom}`;
+    let r = await fetch(cible, {
       method: 'POST',
-      headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'image/jpeg' },
+      headers: { ...entetesAuth(), 'Content-Type': 'image/jpeg' },
       body: blob
     });
+    // Certains projets exigent encore l'en-tête Authorization sur le Storage.
+    if (r.status === 401 || r.status === 403) {
+      r = await fetch(cible, {
+        method: 'POST',
+        headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'image/jpeg' },
+        body: blob
+      });
+    }
     if (!r.ok) throw new Error(await r.text());
     return `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${nom}`;
   }
