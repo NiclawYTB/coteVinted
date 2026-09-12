@@ -26,7 +26,7 @@
 
   /* barre d'actions */
   .actions{
-    display:flex;flex-wrap:wrap;gap:8px;
+    display:flex;flex-wrap:wrap;gap:8px;align-items:center;
     margin:0 0 14px;
   }
   button{
@@ -41,6 +41,8 @@
   button:focus-visible{outline:3px solid var(--bleu);outline-offset:2px;}
   button.plein{background:#000;color:#fff;}
   button.plein:hover{background:#333;}
+  .etat{font-size:12px;color:#5d6b73;}
+  .etat.alerte{color:var(--rouge);font-weight:700;}
 
   /* tableau */
   .sheet{background:#fff;padding:10px;}
@@ -115,7 +117,10 @@
   <div class="actions">
     <button id="add" class="plein">Ajouter une ligne</button>
     <button id="png">Exporter en PNG</button>
+    <button id="save">Sauvegarder (.json)</button>
+    <button id="load">Restaurer</button>
     <button id="clear">Tout effacer</button>
+    <span class="etat" id="etat"></span>
   </div>
 
   <div class="sheet" id="sheet">
@@ -126,8 +131,8 @@
       <thead>
         <tr>
           <th contenteditable>ARTICLE</th>
-          <th contenteditable>PRIX</th>
-          <th contenteditable>PRIX COMPLET</th>
+          <th contenteditable>PRIX achat</th>
+          <th contenteditable>PRIX revente</th>
           <th contenteditable>VALEUR D'ACHAT</th>
         </tr>
       </thead>
@@ -139,16 +144,27 @@
     Clique sur une case photo pour choisir une image, ou fais-la glisser dedans, ou colle-la avec <b>Ctrl+V</b>.
     Tous les textes se modifient directement, titres de colonnes compris.
     Écris <b>PARFAIT</b> / <b>BON</b> en vert, <b>MOYEN</b> / <b>CORRECT</b> en orange, <b>NON</b> / <b>MAUVAIS</b> en rouge.
+    Le tableau se garde dans ce navigateur ; pour le retrouver sur un autre appareil, passe par <b>Sauvegarder (.json)</b> puis <b>Restaurer</b>.
   </p>
 </div>
 
 <input type="file" id="fichier" accept="image/*" hidden>
+<input type="file" id="fichierJson" accept=".json,application/json" hidden>
 
 <script>
+const CLE = 'tableau-articles';
 const corps = document.getElementById('corps');
 const fichier = document.getElementById('fichier');
+const fichierJson = document.getElementById('fichierJson');
+const etat = document.getElementById('etat');
 let cibleDrop = null;      // case photo en cours de remplissage
 let derniereCase = null;   // pour le collage Ctrl+V
+
+function message(txt, alerte) {
+  etat.textContent = txt;
+  etat.classList.toggle('alerte', !!alerte);
+  if (!alerte) setTimeout(() => { if (etat.textContent === txt) etat.textContent = ''; }, 2500);
+}
 
 /* ---------- création d'une ligne ---------- */
 function ligne(d = {}) {
@@ -297,55 +313,94 @@ document.getElementById('clear').addEventListener('click', () => {
 
 document.getElementById('png').addEventListener('click', async e => {
   const btn = e.currentTarget, txt = btn.textContent;
-  if (typeof html2canvas !== 'function') { btn.textContent = 'Export indisponible hors ligne'; setTimeout(() => btn.textContent = txt, 2500); return; }
+  if (typeof html2canvas !== 'function') { message('Export PNG indisponible : la page n\'a pas pu charger html2canvas', true); return; }
   btn.textContent = 'Export en cours…';
   document.body.classList.add('export');
   try {
     const c = await html2canvas(document.getElementById('sheet'), { scale: 2, backgroundColor: '#ffffff', useCORS: true });
-    const a = document.createElement('a');
-    a.download = 'tableau-articles.png';
-    a.href = c.toDataURL('image/png');
-    a.click();
-    btn.textContent = 'Image enregistrée';
+    telecharger(c.toDataURL('image/png'), 'tableau-articles.png');
+    message('Image enregistrée');
   } catch (err) {
-    btn.textContent = 'Export impossible';
+    message('Export impossible', true);
   }
   document.body.classList.remove('export');
-  setTimeout(() => btn.textContent = txt, 2000);
+  btn.textContent = txt;
 });
 
-/* ---------- sauvegarde ---------- */
+/* ---------- sauvegarde fichier ---------- */
+function telecharger(href, nom) {
+  const a = document.createElement('a');
+  a.href = href; a.download = nom; a.click();
+}
+
+document.getElementById('save').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(donnees())], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  telecharger(url, 'tableau-articles.json');
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  message('Fichier téléchargé');
+});
+
+document.getElementById('load').addEventListener('click', () => fichierJson.click());
+
+fichierJson.addEventListener('change', () => {
+  const f = fichierJson.files[0];
+  if (!f) return;
+  const fr = new FileReader();
+  fr.onload = () => {
+    try {
+      const data = JSON.parse(fr.result);
+      if (!data.lignes) throw new Error();
+      appliquer(data);
+      sauver();
+      message('Tableau restauré');
+    } catch (e) {
+      message('Fichier illisible : choisis un .json exporté depuis ce tableau', true);
+    }
+  };
+  fr.readAsText(f);
+  fichierJson.value = '';
+});
+
+/* ---------- mémoire du navigateur ---------- */
+function donnees() {
+  return {
+    entetes: [...document.querySelectorAll('thead th')].map(th => th.textContent),
+    lignes: [...corps.children].map(tr => ({
+      img: tr.querySelector('.drop img')?.src || '',
+      legende: tr.querySelector('.legende').textContent,
+      prix: tr.querySelectorAll('.c-prix')[0].textContent,
+      complet: tr.querySelectorAll('.c-prix')[1].textContent,
+      valeur: tr.querySelector('.c-val').textContent
+    }))
+  };
+}
+
+function appliquer(data) {
+  const th = document.querySelectorAll('thead th');
+  (data.entetes || []).forEach((t, i) => { if (th[i]) th[i].textContent = t; });
+  corps.innerHTML = '';
+  (data.lignes || []).forEach(ligne);
+}
+
 let minuteur;
 function sauver() {
   clearTimeout(minuteur);
-  minuteur = setTimeout(async () => {
-    if (!window.storage) return;
-    const data = {
-      entetes: [...document.querySelectorAll('thead th')].map(th => th.textContent),
-      lignes: [...corps.children].map(tr => ({
-        img: tr.querySelector('.drop img')?.src || '',
-        legende: tr.querySelector('.legende').textContent,
-        prix: tr.querySelectorAll('.c-prix')[0].textContent,
-        complet: tr.querySelectorAll('.c-prix')[1].textContent,
-        valeur: tr.querySelector('.c-val').textContent
-      }))
-    };
-    try { await window.storage.set('tableau-articles', JSON.stringify(data)); } catch (e) {}
+  minuteur = setTimeout(() => {
+    try {
+      localStorage.setItem(CLE, JSON.stringify(donnees()));
+      message('Enregistré');
+    } catch (e) {
+      message('Mémoire pleine : télécharge le .json, puis allège le tableau', true);
+    }
   }, 500);
 }
 
-async function charger() {
+function charger() {
   let data = null;
-  if (window.storage) {
-    try { const r = await window.storage.get('tableau-articles'); data = r ? JSON.parse(r.value) : null; } catch (e) {}
-  }
-  if (data?.lignes?.length) {
-    const th = document.querySelectorAll('thead th');
-    (data.entetes || []).forEach((t, i) => { if (th[i]) th[i].textContent = t; });
-    data.lignes.forEach(ligne);
-  } else {
-    for (let i = 0; i < 6; i++) ligne();
-  }
+  try { data = JSON.parse(localStorage.getItem(CLE)); } catch (e) {}
+  if (data?.lignes?.length) appliquer(data);
+  else for (let i = 0; i < 6; i++) ligne();
 }
 charger();
 </script>
