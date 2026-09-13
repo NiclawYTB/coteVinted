@@ -90,6 +90,27 @@
   [contenteditable]:empty::before{content:attr(data-ph);color:#c3ced4;font-weight:400;font-style:normal;}
   td.c-prix:focus,.legende:focus{background:#eefaff;}
 
+  .zoom{
+    position:absolute;top:12px;left:12px;
+    width:26px;height:26px;padding:0;font-size:13px;line-height:1;
+    border:1px solid #000;background:rgba(255,255,255,.92);
+  }
+
+  .loupe{
+    position:fixed;inset:0;z-index:50;
+    background:rgba(8,12,15,.88);
+    display:flex;align-items:center;justify-content:center;
+    padding:24px;cursor:zoom-out;
+  }
+  .loupe[hidden]{display:none;}
+  .loupe img{max-width:100%;max-height:100%;object-fit:contain;background:#fff;}
+  .loupe .fermer{
+    position:absolute;top:14px;right:14px;
+    width:38px;height:38px;padding:0;font-size:17px;border:2px solid #fff;
+    background:transparent;color:#fff;cursor:pointer;
+  }
+  .loupe .fermer:hover{background:#fff;color:#000;}
+
   .tools{position:absolute;top:2px;right:2px;display:flex;gap:2px;opacity:0;transition:opacity .12s;}
   tr:hover .tools,.tools:focus-within{opacity:1;}
   .tools button{width:24px;height:24px;padding:0;font-size:13px;line-height:1;border:1px solid #000;background:#fff;}
@@ -103,7 +124,7 @@
     background:#fff8ec;font-size:13px;line-height:1.5;
   }
 
-  body.export .tools,body.export .cat{display:none;}
+  body.export .tools,body.export .cat,body.export .zoom{display:none;}
   body.export .drop{border:none;}
   body.export [contenteditable]:empty::before{content:"";}
   body.export .legende{min-height:0;}
@@ -155,6 +176,11 @@
     Clique sur une case photo pour choisir une image, la glisser dedans, ou la coller avec <b>Ctrl+V</b>.
     Écris <b>PARFAIT</b> / <b>BON</b> en vert, <b>MOYEN</b> / <b>CORRECT</b> en orange, <b>NON</b> / <b>MAUVAIS</b> en rouge.
   </p>
+</div>
+
+<div class="loupe" id="loupe" hidden>
+  <button class="fermer" id="fermerLoupe" title="Fermer">✕</button>
+  <img id="loupeImg" alt="">
 </div>
 
 <input type="file" id="fichier" accept="image/*" hidden>
@@ -302,6 +328,7 @@ function creerLigne(l) {
   tr.innerHTML = `
     <td class="c-photo">
       <div class="drop" tabindex="0"><span>Photo de l'article</span></div>
+      <button class="zoom" title="Agrandir la photo" hidden>⌕</button>
       <div class="legende" contenteditable data-ph="Nom de l'article"></div>
       <select class="cat"></select>
       <div class="tools">
@@ -353,6 +380,7 @@ function poserImage(drop, url) {
   img.src = url;
   drop.appendChild(img);
   drop.classList.add('pleine');
+  drop.closest('.c-photo')?.querySelector('.zoom')?.removeAttribute('hidden');
 }
 
 function couleurValeur(td) {
@@ -411,7 +439,7 @@ function preparer(file) {
     fr.onload = () => {
       const img = new Image();
       img.onload = () => {
-        const max = 520;
+        const max = 900;
         const r = Math.min(1, max / Math.max(img.width, img.height));
         const c = document.createElement('canvas');
         c.width = Math.round(img.width * r);
@@ -448,6 +476,12 @@ async function recevoir(drop, file) {
 
 /* ---------- interactions ---------- */
 corps.addEventListener('click', async e => {
+  const z = e.target.closest('.zoom');
+  if (z) {
+    const src = z.closest('.c-photo').querySelector('.drop img')?.src;
+    if (src) ouvrirLoupe(src);
+    return;
+  }
   const b = e.target.closest('.tools button');
   if (b) {
     const tr = b.closest('tr');
@@ -518,6 +552,22 @@ document.addEventListener('paste', e => {
   e.preventDefault();
   recevoir(drop, item.getAsFile());
 });
+
+/* ---------- photo en grand ---------- */
+const loupe = document.getElementById('loupe');
+const loupeImg = document.getElementById('loupeImg');
+
+function ouvrirLoupe(src) {
+  loupeImg.src = src;
+  loupe.hidden = false;
+  document.getElementById('fermerLoupe').focus();
+}
+function fermerLoupe() {
+  loupe.hidden = true;
+  loupeImg.removeAttribute('src');
+}
+loupe.addEventListener('click', fermerLoupe);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !loupe.hidden) fermerLoupe(); });
 
 document.getElementById('add').addEventListener('click', ajouter);
 
